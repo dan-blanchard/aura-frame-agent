@@ -1,0 +1,10 @@
+{
+  "frame_id": "frame_kitchen",
+  "frame_name": "Kitchen frame",
+  "broker_uri": "tcp://192.168.1.10:1883",
+  "username": "frame_kitchen",
+  "password": "change-me",
+  "features": ["effects", "morning", "media", "screen"],
+  "morning_layout": "band",
+  "timezone": "America/New_York"
+}

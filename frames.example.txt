@@ -1,0 +1,5 @@
+# For scripts/nightly-reboot.sh: copy to configs/frames.txt.
+# <frame_id> <ip>, one frame per line. Give the frames DHCP reservations.
+frame_family 192.168.1.50
+frame_alex   192.168.1.51
+frame_sam    192.168.1.52

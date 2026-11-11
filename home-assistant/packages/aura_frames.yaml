@@ -1,0 +1,571 @@
+# Aura frames + frame-agent. Drop into config/packages/ (with
+# `homeassistant: packages: !include_dir_named packages` in configuration.yaml).
+#
+# The frames announce themselves over MQTT discovery, so their entities
+# (select.<frame_id>_effect, ...) appear on their own. This file holds the automations
+# that drive them. The MQTT contract is in home-assistant/README.md.
+#
+# Edit the three lists right below the `script:` line to match your frames:
+#   wall         every frame_id, in the order they hang (left to right), for visitor tours
+#   band_frames  frames that show the morning band with every kid on it
+#   kids         one entry per kid who gets a morning countdown, and their own frame
+# Each kid also needs an input_datetime for their leave time (see input_datetime below).
+
+script:
+  aura_frames_config:
+    alias: "Aura frames: settings (not meant to be run)"
+    # The lists below are YAML anchors, reused by the scripts and templates further down.
+    sequence:
+      - stop: "This script only holds settings."
+    variables:
+      wall: &wall [frame_family, frame_alex, frame_sam]
+      band_frames: &band_frames [frame_family]
+      kids: &kids
+        - name: Alex
+          frame: frame_alex
+          color: "#2bb3a3"
+          leave: input_datetime.aura_leave_alex
+          # false keeps the band up on this kid's mornings with no chip, card or alert
+          countdown: true
+        - name: Sam
+          frame: frame_sam
+          color: "#f28c28"
+          leave: input_datetime.aura_leave_sam
+          countdown: true
+      # Where the frames fetch scene files: HA's IP address. Android 10 can't resolve .local names.
+      scene_base_url: &scene_base_url "http://192.168.1.10:8123/local/aura_scenes/"
+
+  # Sends one visitor along the frames in wall order. It leaves one frame at the height it
+  # enters the next, and HA spaces the legs, so the frames' clocks don't need to agree.
+  # Turkeys (Pumpkin, Franklin) keep to the bottom and the sides; ghosts and Hooty may also
+  # come in from the top or bottom. Hooty is never seen to end: his body stays stretched
+  # across every frame he has crossed (hold_ms) and then his head comes back through them in
+  # reverse. First every frame is told to keep quiet for the whole tour, so a peek that is
+  # out ducks away and no other peek starts until the tour is over.
+  aura_ghost_tour:
+    alias: "Aura frames: visitor tour"
+    mode: single
+    variables:
+      wall: *wall
+      effect: >-
+        {{ integration_entities('mqtt') | select('match', 'select\..*_effect$')
+           | map('states') | reject('in', ['off', 'none', 'unknown', 'unavailable']) | first | default('') }}
+      # Per effect; an effect not listed gets an empty style, which the frame reads as random.
+      style: >-
+        {% set ghosts = ['classic', 'boo', 'boo', 'blinky', 'pinky', 'inky', 'clyde'] %}
+        {% set cast = {'halloween': ghosts, 'halloween_spooky': ghosts,
+                       'thanksgiving': ['hooty', 'pumpkin', 'franklin']} %}
+        {{ cast.get(effect, ['']) | random }}
+      legs: >-
+        {% set n = wall | count %}
+        {% set crossing = 4500 %}
+        {% set walker = style in ['pumpkin', 'franklin'] %}
+        {% set lo, hi = (0.7, 0.92) if walker else (0.15, 0.85) %}
+        {# Half the time the whole wall, otherwise a random stretch of it. #}
+        {% set first = 0 if n < 2 or range(2) | random == 0 else range(n - 1) | random %}
+        {% set last = n - 1 if n < 2 or range(2) | random == 0 else range(first + 1, n) | random %}
+        {% set forward = range(2) | random == 0 %}
+        {% set route = wall[first:last + 1] if forward else wall[first:last + 1] | reverse | list %}
+        {% set enter = 'left' if forward else 'right' %}
+        {% set leave = 'right' if forward else 'left' %}
+        {% set ends = [enter] if walker else [enter, enter, 'top', 'bottom'] %}
+        {% set ns = namespace(legs=[], t=0, pos=(range((lo * 100) | int, (hi * 100) | int + 1) | random) / 100) %}
+        {% for frame in route %}
+          {% set drift = (range(-4, 5) if walker else range(-15, 16)) | random %}
+          {% set next_pos = ([[ns.pos + drift / 100, lo] | max, hi] | min) | round(2) %}
+          {% set from = enter if not loop.first else ends | random %}
+          {% set to = leave if not loop.last else (ends | map('replace', enter, leave) | list) | random %}
+          {% set wait = 0 if loop.last else crossing + 1000 %}
+          {% set ns.legs = ns.legs + [{
+               'frame': frame, 'from': from, 'to': to, 'from_pos': ns.pos, 'to_pos': next_pos,
+               'start_ms': ns.t, 'wait_ms': wait, 'duration_ms': crossing,
+             }] %}
+          {% set ns.pos = next_pos %}
+          {% set ns.t = ns.t + wait %}
+        {% endfor %}
+        {% if style == 'hooty' %}
+          {% set back = 3000 %}
+          {% set rs = namespace(at=ns.t + crossing + 1000, legs=[]) %}
+          {% for leg in ns.legs | reverse %}
+            {% if not loop.first %}{% set rs.at = rs.at + back + leg.wait_ms - crossing %}{% endif %}
+            {% set rs.legs = [dict(leg, hold_ms=rs.at - leg.start_ms - crossing, return_ms=back)] + rs.legs %}
+          {% endfor %}
+          {% set ns.legs = rs.legs %}
+        {% endif %}
+        {{ ns.legs }}
+      # Until the last frame is clear, plus the 3 s head start and a margin.
+      quiet_ms: >-
+        {% set ns = namespace(end=0) %}
+        {% for l in legs %}
+          {% set ns.end = [ns.end, l.start_ms + l.duration_ms + (l.hold_ms | default(0)) + (l.return_ms | default(0))] | max %}
+        {% endfor %}
+        {{ ns.end + 5000 }}
+    sequence:
+      - repeat:
+          for_each: "{{ wall }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: "aura/{{ repeat.item }}/cmd/ghost"
+                qos: 1
+                retain: false
+                payload: "{{ {'quiet_ms': quiet_ms | int} | to_json }}"
+      # A hurried-off visitor needs up to 3 s to leave.
+      - delay:
+          seconds: 3
+      - repeat:
+          for_each: "{{ legs }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: "aura/{{ repeat.item.frame }}/cmd/ghost"
+                qos: 1
+                retain: false
+                payload: >-
+                  {{ {'visit': true, 'style': style, 'from': repeat.item.from, 'to': repeat.item.to,
+                      'from_pos': repeat.item.from_pos, 'to_pos': repeat.item.to_pos,
+                      'duration_ms': repeat.item.duration_ms,
+                      'hold_ms': repeat.item.hold_ms | default(-1),
+                      'return_ms': repeat.item.return_ms | default(-1)} | to_json }}
+            - delay:
+                milliseconds: "{{ repeat.item.wait_ms }}"
+
+  # One peek (or a walk across one frame) at a random frame, for any effect; the frame
+  # picks who and how. Spacing is the aura_frames_peek automation's job.
+  aura_peek:
+    alias: "Aura frames: peek"
+    mode: single
+    variables:
+      wall: *wall
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: "aura/{{ wall | random }}/cmd/ghost"
+          qos: 1
+          retain: false
+          payload: '{"peek": true}'
+
+  # Scene files live in /config/www/aura_scenes. Portrait and landscape frames crop one file
+  # differently, so portrait_file can give portrait frames a version of their own.
+  aura_show_media:
+    alias: "Aura frames: show scene"
+    mode: parallel
+    fields:
+      frames:
+        description: "Frame ids, or leave out for all of them"
+        example: "['frame_family']"
+      file:
+        description: "File name in /config/www/aura_scenes"
+        example: "candelabra.mp4"
+      portrait_file:
+        description: "Optional version for frames listed in portrait_frames"
+      portrait_frames:
+        description: "Frame ids hung in portrait, which get portrait_file"
+        example: "['frame_alex', 'frame_sam']"
+      type:
+        description: "image or video"
+      fit:
+        description: "cover (default) or contain"
+      timeout:
+        description: "Seconds until it clears itself; 0 or left out holds until cleared"
+    variables:
+      wall: *wall
+      base_url: *scene_base_url
+      targets: >-
+        {% set chosen = frames | default(wall) %}
+        {{ [chosen] if chosen is string else chosen }}
+    sequence:
+      - repeat:
+          for_each: "{{ targets }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: "aura/{{ repeat.item }}/cmd/media"
+                qos: 1
+                retain: false
+                payload: >-
+                  {% set name = portrait_file if portrait_file is defined
+                       and repeat.item in (portrait_frames | default([])) else file %}
+                  {{ {'show': true, 'url': base_url ~ name,
+                      'type': type, 'fit': fit | default('cover'),
+                      'timeout_s': timeout | default(0) | int} | to_json }}
+
+  aura_clear_media:
+    alias: "Aura frames: clear scene"
+    mode: parallel
+    fields:
+      frames:
+        description: "Frame ids, or leave out for all of them"
+    variables:
+      wall: *wall
+      targets: >-
+        {% set chosen = frames | default(wall) %}
+        {{ [chosen] if chosen is string else chosen }}
+    sequence:
+      - repeat:
+          for_each: "{{ targets }}"
+          sequence:
+            - action: mqtt.publish
+              data:
+                topic: "aura/{{ repeat.item }}/cmd/media"
+                qos: 1
+                retain: false
+                payload: clear
+
+  # Band frames get every kid leaving today; each kid's own frame gets just that kid and
+  # shows a personal card. A frame with nobody to show gets {"active": false}.
+  aura_morning_publish:
+    alias: "Aura frames: publish morning plan"
+    mode: queued
+    variables:
+      band_frames: *band_frames
+      kids_config: *kids
+      # only: '' means every kid, otherwise just that one.
+      targets: >-
+        {% set ns = namespace(t=[]) %}
+        {% for f in band_frames %}{% set ns.t = ns.t + [{'frame': f, 'only': ''}] %}{% endfor %}
+        {% for k in kids_config %}{% set ns.t = ns.t + [{'frame': k.frame, 'only': k.name}] %}{% endfor %}
+        {{ ns.t }}
+    sequence:
+      - repeat:
+          for_each: "{{ targets }}"
+          sequence:
+            - variables:
+                only: "{{ repeat.item.only }}"
+            - action: mqtt.publish
+              data:
+                topic: "aura/{{ repeat.item.frame }}/cmd/morning"
+                qos: 1
+                retain: true
+                payload: >-
+                  {% set window = is_state('binary_sensor.aura_morning_window', 'on') %}
+                  {% set cleared = states('input_text.aura_morning_cleared').split(',') %}
+                  {% set ns = namespace(kids=[], live=false) %}
+                  {% for k in state_attr('sensor.aura_morning_kids', 'kids') or []
+                     if only in ('', k.name) %}
+                    {% set is_cleared = k.name in cleared %}
+                    {% set ns.live = ns.live or not is_cleared %}
+                    {% set ns.kids = ns.kids + [{
+                         'name': k.name, 'color': k.color, 'leave_at': k.leave_at,
+                         'note': '', 'cleared': is_cleared,
+                         'countdown': k.countdown | default(true),
+                       }] %}
+                  {% endfor %}
+                  {{ ({'active': true,
+                       'events': state_attr('sensor.aura_morning_kids', 'events') or [],
+                       'kids': ns.kids}
+                      if window and ns.live else {'active': false}) | to_json }}
+
+automation:
+  - id: aura_frames_seasonal_effect
+    alias: "Aura frames: seasonal effect"
+    description: >-
+      Halloween: cobwebs and ghosts Oct 1 - Nov 1, with the spooky variant (vignette,
+      flies and spiders) from 3:15 PM until sunrise. Thanksgiving: autumn leaves
+      and the turkey cast (Hooty, Pumpkin, Franklin) Sunday-Saturday of Thanksgiving
+      week. Off the rest of the year.
+    mode: restart
+    triggers:
+      - trigger: time
+        at: "00:00:30"
+      - trigger: time
+        at: "15:15:00"
+      - trigger: sun
+        event: sunrise
+      - trigger: homeassistant
+        event: start
+      # A frame coming back online re-reads the retained command anyway, but
+      # this also covers a frame that was added mid-season.
+      - trigger: event
+        event_type: entity_registry_updated
+        event_data:
+          action: create
+    variables:
+      frames: >-
+        {{ integration_entities('mqtt')
+           | select('match', 'select\..*_effect$') | list }}
+      in_season: >-
+        {{ now().month == 10 or (now().month == 11 and now().day == 1) }}
+      # sun.sun can still hold the old state when the sunrise trigger fires.
+      dark: >-
+        {{ now() >= today_at('15:15')
+           or (trigger.platform != 'sun' and is_state('sun.sun', 'below_horizon')) }}
+      # Thanksgiving (US) is the 4th Thursday of November; the week runs from the Sunday
+      # before to the Saturday after.
+      thanksgiving_week: >-
+        {% set thursday = 22 + (3 - now().replace(day=1).weekday()) % 7 %}
+        {{ now().month == 11 and thursday - 4 <= now().day <= thursday + 2 }}
+      effect: >-
+        {{ 'halloween_spooky' if in_season and dark
+           else 'halloween' if in_season
+           else 'thanksgiving' if thanksgiving_week
+           else 'off' }}
+    conditions:
+      - "{{ frames | count > 0 }}"
+    actions:
+      - action: select.select_option
+        target:
+          entity_id: "{{ frames }}"
+        data:
+          option: "{{ effect }}"
+
+  # Tours: a visitor crosses part or all of the wall, about once an hour. Never within
+  # 45 min of the last, then a 1-in-15 chance each minute (gaps ~45-90 min).
+  - id: aura_frames_ghost_tour
+    alias: "Aura frames: visitor tour"
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    conditions:
+      - &effect_on >-
+        {{ integration_entities('mqtt') | select('match', 'select\..*_effect$')
+           | map('states') | reject('in', ['off', 'none', 'unknown', 'unavailable']) | list | count > 0 }}
+      - "{{ not is_state('binary_sensor.aura_morning_window', 'on') }}"
+      - >-
+        {% set last = state_attr('script.aura_ghost_tour', 'last_triggered') %}
+        {{ (last is none or now() - last > timedelta(minutes=45)) and range(15) | random == 0 }}
+    actions:
+      - action: script.aura_ghost_tour
+
+  # Peeks, one at a time at a random frame: about every 15 min across the whole wall, never
+  # within 5 min of the last. The frames have no peek timer of their own, because only HA
+  # sees all of them. No peek while a tour is crossing or for 2 min after it started.
+  - id: aura_frames_peek
+    alias: "Aura frames: peek"
+    triggers:
+      - trigger: time_pattern
+        minutes: "/1"
+    conditions:
+      - *effect_on
+      - "{{ not is_state('binary_sensor.aura_morning_window', 'on') }}"
+      - >-
+        {% set tour = state_attr('script.aura_ghost_tour', 'last_triggered') %}
+        {{ is_state('script.aura_ghost_tour', 'off')
+           and (tour is none or now() - tour > timedelta(minutes=2)) }}
+      # 5 min after the last one, then 1 in 10 each minute: ~15 min apart on average.
+      - >-
+        {% set last = state_attr('script.aura_peek', 'last_triggered') %}
+        {{ (last is none or now() - last >= timedelta(minutes=5)) and range(10) | random == 0 }}
+    actions:
+      - action: script.aura_peek
+
+  # Morning display. sensor.aura_morning_kids says who leaves today, the window opens 60
+  # minutes before the first of them, and the frames count down locally from the retained
+  # cmd/morning. This only republishes when the window opens or closes or a kid is cleared.
+  # Each frame also clears a kid by itself at T+10.
+  - id: aura_frames_morning
+    alias: "Aura frames: morning display"
+    mode: queued
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.aura_morning_window
+        to: "on"
+        not_from: [unavailable, unknown] # a restart mustn't forget who's cleared
+        id: open
+      - trigger: state
+        entity_id: binary_sensor.aura_morning_window
+        to: "off"
+        not_from: [unavailable, unknown]
+        id: close
+      - trigger: mqtt
+        topic: aura/+/event
+        id: event
+      - trigger: homeassistant
+        event: start
+        id: start
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: open
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.aura_morning_cleared
+                data:
+                  value: ""
+              - action: script.aura_morning_publish
+          - conditions:
+              - condition: trigger
+                id: close
+            sequence:
+              - action: script.aura_morning_publish
+          - conditions:
+              - condition: trigger
+                id: start
+              - condition: state
+                entity_id: binary_sensor.aura_morning_window
+                state: "on"
+            sequence:
+              - action: script.aura_morning_publish
+          - conditions:
+              - condition: state
+                entity_id: binary_sensor.aura_morning_window
+                state: "on"
+              - condition: template
+                value_template: >-
+                  {{ trigger.id == 'event'
+                     and trigger.payload_json is defined
+                     and trigger.payload_json.type == 'dismiss' }}
+            sequence:
+              - action: input_text.set_value
+                target:
+                  entity_id: input_text.aura_morning_cleared
+                data:
+                  value: >-
+                    {% set cleared = states('input_text.aura_morning_cleared').split(',') | reject('in', ['', 'unknown', 'unavailable']) | list %}
+                    {{ (cleared + [trigger.payload_json.kid]) | unique | join(',') }}
+              - action: script.aura_morning_publish
+
+  # A screen left Off overnight mustn't hide the morning display. Also catches a frame that
+  # was offline at 6:00 (cmd/screen isn't retained). Off set after 6:00 holds; On is left alone.
+  - id: aura_frames_screen_morning_reset
+    alias: "Aura frames: screen Off back to Auto at 6 AM"
+    mode: queued
+    triggers:
+      - trigger: time
+        at: "06:00:00"
+      # List every frame's screen select here.
+      - trigger: state
+        entity_id:
+          - select.frame_family_screen
+          - select.frame_alex_screen
+          - select.frame_sam_screen
+        from: unavailable
+        to: "OFF"
+        id: back_online
+      - trigger: homeassistant
+        event: start
+        id: back_online
+    conditions:
+      - "{{ trigger.id != 'back_online' or 6 <= now().hour < 9 }}"
+    variables:
+      held_off: >-
+        {{ integration_entities('mqtt')
+           | select('match', 'select\\..*_screen$')
+           | select('is_state', 'OFF') | list }}
+    actions:
+      - if: "{{ held_off | count > 0 }}"
+        then:
+          - action: select.select_option
+            target:
+              entity_id: "{{ held_off }}"
+            data:
+              option: AUTO
+
+input_datetime:
+  aura_leave_alex:
+    name: Alex leaves
+    has_time: true
+  aura_leave_sam:
+    name: Sam leaves
+    has_time: true
+
+input_boolean:
+  # Turn off for vacations and snow days.
+  aura_morning_enabled:
+    name: Morning countdowns
+
+input_text:
+  aura_morning_cleared:
+    name: Kids cleared this morning
+    max: 255
+
+template:
+  # Who leaves today, and today's events for the band. A school day is a weekday that
+  # binary_sensor.workday_sensor (the Workday integration) doesn't rule out, while
+  # input_boolean.aura_morning_enabled is on. Events come from calendar.family if you have
+  # one: up to three timed events between now and noon, all-day events left out.
+  - triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: event_template_reloaded
+      - trigger: state
+        entity_id:
+          - input_boolean.aura_morning_enabled
+          - input_datetime.aura_leave_alex
+          - input_datetime.aura_leave_sam
+    actions:
+      - variables:
+          kids_config: *kids
+          events_calendar: calendar.family
+      - if: "{{ states(events_calendar) not in ['unknown', 'unavailable'] }}"
+        then:
+          - action: calendar.get_events
+            continue_on_error: true
+            target:
+              entity_id: "{{ events_calendar }}"
+            data:
+              start_date_time: "{{ now() }}"
+              end_date_time: "{{ today_at('12:00') }}"
+            response_variable: cal
+    sensor:
+      - name: Aura morning kids
+        unique_id: aura_morning_kids
+        state: "{{ this.attributes.kids | default([]) | count }}"
+        attributes:
+          kids: >-
+            {% set workday = states('binary_sensor.workday_sensor') %}
+            {% set school = now().weekday() < 5
+                 and workday != 'off'
+                 and is_state('input_boolean.aura_morning_enabled', 'on') %}
+            {% set ns = namespace(kids=[]) %}
+            {% for k in kids_config if school and states(k.leave) not in ['unknown', 'unavailable'] %}
+              {% set ns.kids = ns.kids + [{
+                   'name': k.name, 'color': k.color, 'frame': k.frame,
+                   'leave_at': today_at(states(k.leave)).isoformat(),
+                   'countdown': k.countdown | default(true),
+                 }] %}
+            {% endfor %}
+            {{ ns.kids }}
+          events: >-
+            {% set found = (cal | default({})).get(events_calendar, {}).get('events', []) %}
+            {% set ns = namespace(events=[]) %}
+            {% for e in found | rejectattr('start', 'match', '^\\d{4}-\\d{2}-\\d{2}$') | sort(attribute='start') %}
+              {% set ns.events = ns.events + [{'start': (e.start | as_datetime | as_local).strftime('%-I:%M %p'),
+                   'title': e.summary}] %}
+            {% endfor %}
+            {{ ns.events[:3] }}
+  - binary_sensor:
+      - name: Aura morning window
+        unique_id: aura_morning_window
+        # A template reload briefly sees no kids.
+        delay_on: "00:00:30"
+        state: >-
+          {% set kids = state_attr('sensor.aura_morning_kids', 'kids') or [] %}
+          {% if kids | count == 0 %}
+            false
+          {% else %}
+            {% set times = kids | map(attribute='leave_at') | map('as_datetime') | sort %}
+            {{ times | first - timedelta(minutes=60) <= now() < times | last + timedelta(minutes=10) }}
+          {% endif %}
+
+  # switch.frames: every frame's screen at once, for voice ("turn off the frames") or a TV
+  # scene. Off holds every screen OFF over MQTT; on hands them back to Aura (AUTO), which
+  # also ends an ON hold. The 6 AM automation above returns a forgotten Off to Auto.
+  - switch:
+      - name: Frames
+        unique_id: aura_frames_all_screens
+        icon: mdi:image-frame
+        availability: >-
+          {{ integration_entities('mqtt') | select('match', 'select\..*_screen$')
+             | select('has_value') | list | count > 0 }}
+        # On while any frame isn't held off.
+        state: >-
+          {{ integration_entities('mqtt') | select('match', 'select\..*_screen$')
+             | select('has_value') | map('states') | reject('eq', 'OFF') | list | count > 0 }}
+        turn_on:
+          - action: select.select_option
+            target:
+              entity_id: "{{ integration_entities('mqtt') | select('match', 'select\\..*_screen$') | list }}"
+            data:
+              option: AUTO
+        turn_off:
+          - action: select.select_option
+            target:
+              entity_id: "{{ integration_entities('mqtt') | select('match', 'select\\..*_screen$') | list }}"
+            data:
+              option: "OFF"

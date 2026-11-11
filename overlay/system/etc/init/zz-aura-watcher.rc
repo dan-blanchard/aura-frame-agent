@@ -1,0 +1,4 @@
+service factory_rst_wtch /system/bin/factory-reset-watcher.sh
+    class late_start
+    seclabel u:object_r:zygote_exec:s0
+    override

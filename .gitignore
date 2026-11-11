@@ -1,0 +1,14 @@
+# Per-frame configs hold MQTT passwords; identity backups hold Wi-Fi passwords.
+configs/
+backups/
+frame-agent/signing/
+
+# Android build output
+frame-agent/.gradle/
+frame-agent/.kotlin/
+frame-agent/build/
+frame-agent/app/build/
+frame-agent/local.properties
+.DS_Store
+__pycache__/
+!frame-agent/gradle/wrapper/gradle-wrapper.jar
