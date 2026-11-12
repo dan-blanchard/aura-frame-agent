@@ -19,6 +19,8 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
+// Fan art: Hooty is Disney's, Pumpkin is Cartoon Network's and Franklin is Nintendo's. Their
+// designs aren't covered by this project's 0BSD license; see README.md.
 /** The Thanksgiving cast (Dan, 2026-11-09; the Avatar turkey duck was cut). Names are the cmd/ghost `style` values. */
 enum class TurkeyStyle {
     HOOTY, // The Owl House: his face is the rounded end of a long caramel-brown tube

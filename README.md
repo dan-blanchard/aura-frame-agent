@@ -189,8 +189,18 @@ adb reboot
 
 ## License
 
-[0BSD](LICENSE), except `overlay/system/bin/factory-reset-watcher.sh`, which is a modified
-copy of Aura's own script.
+[0BSD](LICENSE), with two exceptions:
+
+- `overlay/system/bin/factory-reset-watcher.sh` is a modified copy of Aura's own script.
+- The seasonal effects draw fan art of characters that belong to other people:
+  - Boo and Franklin (*Super Mario* and *Animal Crossing*) are Nintendo's.
+  - The Pac-Man ghosts (Blinky, Pinky, Inky and Clyde) are Bandai Namco's.
+  - Hooty (*The Owl House*) is Disney's.
+  - Pumpkin (*Steven Universe*) is Cartoon Network's.
+
+  The code is mine to license, but the characters aren't. The 0BSD license doesn't cover
+  their designs, and this project isn't affiliated with or endorsed by any of their owners.
+  The ghost called `classic` and the autumn leaves are original.
 
 Almost all of this was written by [Claude Code](https://claude.com/claude-code), working
 with me. This project is not affiliated with or endorsed by Aura.

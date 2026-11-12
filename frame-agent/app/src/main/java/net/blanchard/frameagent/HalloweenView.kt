@@ -20,6 +20,8 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.random.Random
 
+// Fan art: Boo is Nintendo's and the Pac-Man ghosts are Bandai Namco's. Their designs aren't
+// covered by this project's 0BSD license; see README.md. CLASSIC is original.
 enum class GhostStyle(val color: Int = Color.WHITE) {
     CLASSIC,
     BOO,
