@@ -5,7 +5,7 @@
 #  - each loop writes the DragonDog heartbeat, atomically (temp file + mv), so the hardware
 #    watchdog stays fed even if Aura's updater stops writing it. A plain `>` races
 #    DragonDog's read, and one empty read is enough for it to reset the frame.
-# The button behavior is unchanged: a press shorter than 10 s on the flap pinhole turns adb on, and
+# The button behavior is unchanged: a press shorter than 10 s on the pinhole under the sticker turns adb on, and
 # 10 s or more reflashes the factory image.
 set -e
 set -x

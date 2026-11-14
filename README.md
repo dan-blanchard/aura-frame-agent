@@ -2,7 +2,7 @@
 
 Root access, a cloud kill switch, and Home Assistant control for Aura Walden photo frames.
 
-Everything here installs over `adb` through the micro-USB port behind the frame's back flap.
+Everything here installs over `adb` through the frame's micro-USB port, which is hidden behind a sticker next to the power port.
 You don't need to open the frame. When you're done, each frame:
 
 - keeps showing your Aura photos exactly as before
@@ -32,7 +32,7 @@ The story of how this came together is in
 
 **The Walden has two pinhole buttons, and the obvious one erases the frame.** The pinhole
 out in the open is Aura's reset: hold it for about 8 seconds and the frame wipes itself.
-Leave that one alone. The one you want is behind the small flap on the back, next to the
+Leave that one alone. The one you want is under the sticker next to the power port, beside the
 micro-USB port.
 
 ## Setup
@@ -41,9 +41,11 @@ Do the whole thing on one frame first, and try anything new on that frame before
 
 ### 1. Turn on adb
 
-Open the flap, connect the micro-USB port to your computer, and keep the frame's normal
-power plugged in too (USB alone browns out partway through boot). With the frame booted,
-press the flap pinhole for about 2 seconds and release. Holding it for 10 seconds or more
+Peel back the sticker next to the power port, connect the micro-USB port to your computer,
+and keep the frame's normal power plugged in too (USB alone browns out partway through boot).
+The power plug covers the micro-USB port when it's plugged in normally, so plug it in
+sideways to fit both cables. With the frame booted, press the pinhole under the sticker for
+about 2 seconds and release. Holding it for 10 seconds or more
 reflashes the factory image instead.
 
 ```sh
