@@ -1,6 +1,6 @@
 # aura-frame-agent
 
-Root access, a cloud kill switch, and Home Assistant control for Aura Walden photo frames.
+Root access, a cloud kill switch, and Home Assistant control for Aura photo frames.
 
 Everything here installs over `adb` through the frame's micro-USB port, which is hidden behind a sticker next to the power port.
 You don't need to open the frame. When you're done, each frame:
@@ -18,7 +18,9 @@ The story of how this came together is in
 
 > [!WARNING]
 > This is tested on four Walden (AF110) frames running Aura's firmware as of October 2026,
-> which is an Android 10 engineering build. Other models or newer firmware may differ. It
+> which is an Android 10 engineering build. As far as I know, Aura's other current frames
+> are the same hardware in different sizes, so it should work on them too, but I haven't
+> tried any, and newer firmware may differ. It
 > can leave a frame in a state you'll have to recover from, and it's certainly not supported
 > by Aura. Back up each frame's identity before you change anything (step 2).
 
