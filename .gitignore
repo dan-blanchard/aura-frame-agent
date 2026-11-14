@@ -1,6 +1,8 @@
 # Per-frame configs hold MQTT passwords; identity backups hold Wi-Fi passwords.
 configs/
 backups/
+# Display history copied off the frames by nightly-reboot.sh.
+/impressions
 frame-agent/signing/
 
 # Android build output

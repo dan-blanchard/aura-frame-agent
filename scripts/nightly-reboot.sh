@@ -15,8 +15,12 @@
 #
 # Frames file (default configs/frames.txt, or $FRAMES_FILE): one "<frame_id> <ip>" per line,
 # e.g. "frame_kitchen 192.168.1.50". Blank lines and # comments are ignored.
+# Each frame's display history is copied to $IMPRESSIONS_DIR (default impressions/ in this
+# repo) before the reboot and kept 30 days; frame-shuffle-check.py reads it.
 # Home Assistant (optional): HA_URL (http://homeassistant.local:8123), HA_TOKEN (a
 # long-lived access token) and HA_NOTIFY (a notify service such as mobile_app_my_phone).
+# HA_TOKEN_FILE can name a file holding the token instead, which keeps it out of a launchd
+# plist or crontab.
 #
 # Usage: nightly-reboot.sh [--check] [--only <frame_id>]
 #   --check  verify reachability and Carousel only; reboot nothing
@@ -26,6 +30,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 FRAMES_FILE="${FRAMES_FILE:-$(dirname "$HERE")/configs/frames.txt}"
 ADB="${ADB:-$(command -v adb)}"
 [ -x "$ADB" ] || { echo "adb not found; set ADB" >&2; exit 2; }
+IMPRESSIONS_DIR="${IMPRESSIONS_DIR:-$(dirname "$HERE")/impressions}"
 [ -f "$FRAMES_FILE" ] || { echo "no frames file at $FRAMES_FILE" >&2; exit 2; }
 
 declare -a NAMES=()
@@ -84,6 +89,7 @@ wait_for_photos() {  # echoes the frames still not on photos after up to $1 s
   echo "${pending[@]+"${pending[@]}"}"
 }
 
+[ -z "${HA_TOKEN:-}" ] && [ -n "${HA_TOKEN_FILE:-}" ] && HA_TOKEN="$(cat "$HA_TOKEN_FILE")"
 have_ha() { [ -n "${HA_URL:-}" ] && [ -n "${HA_TOKEN:-}" ]; }
 ha() {  # ha METHOD PATH [JSON]
   curl -s -m 20 -X "$1" -H "Authorization: Bearer $HA_TOKEN" \
@@ -122,6 +128,21 @@ if [ $CHECK = 1 ]; then
   have_ha && log "HA: $(ha GET /api/ | tr -d '\n')"
   exit 0
 fi
+
+# Keep each frame's display history: Aura periodically rewrites impressions_v1.dat down to
+# one row per photo, so the order can only be studied from daily copies.
+mkdir -p "$IMPRESSIONS_DIR"
+STAMP=$(date +%Y%m%d-%H%M)
+for n in "${NAMES[@]}"; do
+  if connect "$n" && "$ADB" -s "$(ip_of "$n"):5555" exec-out \
+       cat /data/data/com.pushd.storyframe/files/impressions_v1.dat > "$IMPRESSIONS_DIR/$STAMP-$n.dat"; then
+    log "$n: impressions saved ($(wc -c < "$IMPRESSIONS_DIR/$STAMP-$n.dat" | tr -d ' ') bytes)"
+  else
+    rm -f "$IMPRESSIONS_DIR/$STAMP-$n.dat"
+    log "$n: impressions copy FAILED"
+  fi
+done
+find "$IMPRESSIONS_DIR" -name '*.dat' -mtime +30 -delete
 
 reboot_frames "${NAMES[@]}"
 sleep 45   # frames take ~25-30 s to reach Carousel; don't poll the old session

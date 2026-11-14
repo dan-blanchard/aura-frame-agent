@@ -165,6 +165,16 @@ every frame, checks that each one comes back to its photos, and re-sends any scr
 from Home Assistant. Copy `frames.example.txt` to `configs/frames.txt`, then run it from cron
 or launchd at 3 AM.
 
+Before each reboot it saves a copy of each frame's display history to `impressions/`.
+`scripts/frame-shuffle-check.py` reads those copies and tells you whether it's working. For
+each frame and day, it shows how many photos were shown and what share came in the same
+order as the day before. Without the reboot, most days on our frames repeated 90-100%; with it, 0-2%.
+Given the photo sorter's Aura login, it also counts the photos a frame holds but never showed:
+
+```sh
+uv run scripts/frame-shuffle-check.py --since 2026-11-01
+```
+
 ## Undoing it
 
 Everything lives in the `/system` overlay and two directories in `/cache`:
