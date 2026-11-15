@@ -18,13 +18,21 @@
 # unaffected. NEVER occupy /cache/ota_update.zip itself — an existing FINAL zip is
 # treated as "already downloaded" and goes straight to verify->reboot.
 #
+# The freeze itself is overlay/system/bin/aura-ota-freeze.sh. This installs it into the
+# frame's /system overlay with an init file that reruns it at every boot, then runs it once
+# now. /cache is wiped by a factory reset, including one Aura's app starts on a command from
+# Aura; the boot-time run puts the freeze back before the updater starts again.
+#
 # Usage:
 #   frame-disable-ota.sh [serial]          # apply the freeze
 #   frame-disable-ota.sh [serial] --undo   # remove the freeze
 # serial may be a USB serial (V60-...) or a TCP endpoint (192.168.1.50:5555).
-#
-# NOTE: /cache is wiped by a factory reset/recovery — re-run this after any reset.
 set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+OVERLAY="$(dirname "$HERE")/overlay/system"
+SCRIPT=/system/bin/aura-ota-freeze.sh
+RC=/system/etc/init/zz-aura-otafreeze.rc
 
 SERIAL=""; UNDO=0
 for a in "$@"; do
@@ -43,8 +51,16 @@ adb "${S[@]}" wait-for-device
 adb "${S[@]}" root >/dev/null 2>&1 || true
 adb "${S[@]}" wait-for-device
 
+# Without the overlay, /system writes fail. Stop rather than half-apply.
+adb "${S[@]}" shell 'mount | grep -q overlay' \
+  || { echo "no /system overlay on this frame; stopping" >&2; exit 1; }
+# The overlay comes back read-only after every reboot.
+adb "${S[@]}" remount >/dev/null
+adb "${S[@]}" wait-for-device
+
 if [ "$UNDO" -eq 1 ]; then
-  echo "== removing OTA staging-block =="
+  echo "== removing the OTA freeze =="
+  adb "${S[@]}" shell "rm -f $SCRIPT $RC && echo '  removed the boot-time script'"
   for P in "${BLOCKS[@]}"; do
     adb "${S[@]}" shell "toybox chattr -i '$P' 2>/dev/null; rm -rf '$P' && echo '  removed $P' || echo '  (nothing at $P)'"
   done
@@ -52,18 +68,13 @@ if [ "$UNDO" -eq 1 ]; then
   exit 0
 fi
 
-echo "== pre-check =="
-# A stale FINAL zip would apply on reboot — remove it (it's just a staged download).
-adb "${S[@]}" shell "if [ -e '$FINAL' ]; then echo '  WARNING: stale $FINAL present -> removing so it cannot apply'; toybox chattr -i '$FINAL' 2>/dev/null; rm -f '$FINAL'; else echo '  ok: no stale final zip'; fi"
+echo "== installing the boot-time freeze =="
+adb "${S[@]}" push "$OVERLAY/bin/aura-ota-freeze.sh" "$SCRIPT" >/dev/null
+adb "${S[@]}" push "$OVERLAY/etc/init/zz-aura-otafreeze.rc" "$RC" >/dev/null
+adb "${S[@]}" shell "chmod 0755 $SCRIPT; chmod 0644 $RC; restorecon $SCRIPT $RC"
 
 echo "== planting immutable staging blocks =="
-for P in "${BLOCKS[@]}"; do
-  adb "${S[@]}" shell "
-    toybox chattr -i '$P' 2>/dev/null; rm -rf '$P' 2>/dev/null
-    mkdir '$P' && : > '$P/.block' && chown -R root:root '$P' && chmod 000 '$P'
-    if toybox chattr +i '$P' 2>/dev/null; then echo '  +i set on $P'; else echo '  WARN: +i NOT applied on $P (relying on non-empty dir)'; fi
-  "
-done
+adb "${S[@]}" shell "sh $SCRIPT" | sed 's/^/  /'
 
 echo "== verify =="
 for P in "${BLOCKS[@]}"; do
@@ -77,10 +88,10 @@ done
 adb "${S[@]}" shell "[ -e '$FINAL' ] && echo '  !! final zip present (unexpected)' || echo '  final zip absent: good'"
 echo -n "  foreground: "; adb "${S[@]}" shell 'dumpsys activity activities 2>/dev/null | grep -m1 ResumedActivity | grep -oE "com\.[a-z.]+/[.A-Za-z]+"'
 
-cat <<'EOF'
+cat <<'EOT'
 Done. OTA/APK download is dead-ended at immutable staging dirs; the update CHECK
 still answers no_update so the launcher/photos are unaffected.
  - Reboot once to confirm a clean boot to CarouselActivity + blocks persist.
- - Re-run after any factory reset (/cache gets wiped).
+ - The freeze is rebuilt at every boot, so it comes back after a factory reset.
  - Undo: frame-disable-ota.sh [serial] --undo
-EOF
+EOT

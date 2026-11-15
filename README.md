@@ -106,14 +106,18 @@ scripts/frame-disable-ota.sh V60-12345678
 
 This plants immutable directories where Aura's updater stages its downloads. The update
 check still runs and still answers "no update", so the frame boots normally, but no update
-can be written. Two of my four frames already had a complete firmware update downloaded and
+can be written. It also installs a small script in the `/system` overlay that plants them
+again at every boot, before any app starts. Two of my four frames already had a complete firmware update downloaded and
 waiting to install on the next reboot; the script removes one if it finds it. Reboot once
 afterwards and check that the photos come back.
 
 **Don't disable Aura's updater app** (`com.pushd.updater`) instead. It's also the frame's
 home screen and what starts the photo app, so disabling it leaves the screen black.
 
-`/cache` is cleared by a factory reset, so run this again after one.
+A factory reset clears `/cache`, and Aura's app can still start one when Aura tells it to
+(I haven't blocked that). The boot-time script puts the freeze back on the first boot
+afterwards. I tested this by wiping a frame: it came back as itself with its photos, the
+freeze and frame-agent.
 
 ### 5. Network adb (optional)
 
