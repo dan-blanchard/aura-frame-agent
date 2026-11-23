@@ -553,10 +553,12 @@ template:
         availability: >-
           {{ integration_entities('mqtt') | select('match', 'select\..*_screen$')
              | select('has_value') | list | count > 0 }}
-        # On while any frame isn't held off.
+        # On while any frame says its panel is lit. Following the mode instead would read "on"
+        # whenever the frames are in AUTO, even with every panel dark.
         state: >-
           {{ integration_entities('mqtt') | select('match', 'select\..*_screen$')
-             | select('has_value') | map('states') | reject('eq', 'OFF') | list | count > 0 }}
+             | map('replace', 'select.', 'sensor.') | map('replace', '_screen', '_state')
+             | select('has_value') | select('is_state_attr', 'screen', 'on') | list | count > 0 }}
         turn_on:
           - action: select.select_option
             target:

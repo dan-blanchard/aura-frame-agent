@@ -30,6 +30,8 @@ It includes:
   Turn `input_boolean.aura_morning_enabled` off for vacations.
 - **Screen control.** `switch.frames` turns every screen off (or hands them back to Aura's
   own light-sensor schedule), and an Off left on overnight goes back to Auto at 6 AM.
+  Its state is whether any frame's panel is actually lit, so it reads off when Aura has
+  them dark at night.
 - **Scenes.** `script.aura_show_media` shows an image or video from `/config/www/aura_scenes`
   on some or all frames; `script.aura_clear_media` clears it.
 

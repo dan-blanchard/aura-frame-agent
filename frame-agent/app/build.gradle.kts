@@ -24,8 +24,8 @@ android {
         minSdk = 29
         // Frames run Android 10. Targeting 29 avoids the API 34 foreground-service-type rules.
         targetSdk = 29
-        versionCode = 20
-        versionName = "0.5.5"
+        versionCode = 21
+        versionName = "0.5.6"
     }
 
     signingConfigs {

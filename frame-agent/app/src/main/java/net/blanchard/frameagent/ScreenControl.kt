@@ -21,7 +21,12 @@ object ScreenMode {
  * Holds the panel on or off for HA by writing ctrl_lcd. zz-aura-screen.rc makes the node
  * writable at boot; without it the frame stays under Aura's control. Aura only writes the
  * node when its own idea of on/off changes, and never reads it, so while HA holds a state
- * we rewrite whatever Aura sets, and AUTO has to put back what Aura believes.
+ * we rewrite whatever Aura sets, and AUTO has to put back what Aura believes. Get that wrong
+ * and the panel stays that way until Aura next changes its mind: a panel left off while Aura
+ * thought it was on stayed dark all the next day.
+ *
+ * Every write to the node moves its modified time, even one that repeats the value, so a
+ * modified time we didn't cause is Aura writing, and the value then is what Aura believes.
  */
 class ScreenControl(context: Context, private val onChange: () -> Unit) {
 
@@ -40,9 +45,17 @@ class ScreenControl(context: Context, private val onChange: () -> Unit) {
     var isOn = true
         private set
 
+    // What Aura last set the panel to, or null if it hasn't written since the agent started
+    // in a hold. seenWrite is the node's modified time as of the last write we know about.
+    private var auraOn: Boolean? = null
+    private var seenWrite = 0L
+
     fun start(initial: String) {
         handler.post {
             mode = usable(initial)
+            seenWrite = node.lastModified()
+            // Under Aura's control the node is Aura's. In a hold it may be our own old write.
+            if (mode == ScreenMode.AUTO) auraOn = read()
             tick()
         }
     }
@@ -72,8 +85,14 @@ class ScreenControl(context: Context, private val onChange: () -> Unit) {
 
     private fun tick() {
         handler.removeCallbacks(poll)
+        val written = node.lastModified()
         var current = read()
         if (current != null) {
+            if (written != seenWrite) {
+                seenWrite = written
+                auraOn = current
+                if (mode != ScreenMode.AUTO) Log.i(TAG, "Aura set the panel ${if (current) "on" else "off"} during a hold")
+            }
             val wanted = when (mode) {
                 ScreenMode.ON -> true
                 ScreenMode.OFF -> false
@@ -88,8 +107,17 @@ class ScreenControl(context: Context, private val onChange: () -> Unit) {
         handler.postDelayed(poll, POLL_MS)
     }
 
-    /** Aura turns the panel off below about 3 lux; match that, or it could stay lit all night. */
+    /**
+     * Puts the panel back to what Aura last set. If Aura hasn't written since the agent started
+     * in a hold, there's only the room to go on: Aura turns the panel off below about 3 lux, so
+     * match that, or it could stay lit all night.
+     */
     private fun restoreAuraState() {
+        auraOn?.let {
+            write(it)
+            tick()
+            return
+        }
         val light = sensors.getDefaultSensor(Sensor.TYPE_LIGHT)
         if (light == null) {
             write(true)
@@ -126,6 +154,7 @@ class ScreenControl(context: Context, private val onChange: () -> Unit) {
 
     private fun write(on: Boolean): Boolean = try {
         node.writeText(if (on) "1" else "0")
+        seenWrite = node.lastModified()
         Log.i(TAG, "ctrl_lcd -> ${if (on) "on" else "off"} ($mode)")
         true
     } catch (e: Exception) {
