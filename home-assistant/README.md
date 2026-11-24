@@ -20,8 +20,8 @@ It includes:
 
 - **Seasonal effects.** Halloween cobwebs and ghosts through October (with flies and spiders
   after dark), and Thanksgiving leaves and visitors during Thanksgiving week.
-- **Visitor tours and peeks.** About once an hour, one visitor travels across the frames in
-  wall order. Every 15 minutes or so, one peeks in on a random frame.
+- **Visitor tours and peeks.** About every half hour, one visitor travels across the frames
+  in wall order. Every 6 minutes or so, one peeks in on a frame; the frames take turns.
 - **Morning countdowns.** On school days (weekdays, minus whatever the
   [Workday](https://www.home-assistant.io/integrations/workday/) integration rules out),
   the band appears an hour before the first kid leaves. Each kid's frame shows a countdown

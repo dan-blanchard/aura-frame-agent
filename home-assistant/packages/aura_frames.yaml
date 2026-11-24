@@ -130,17 +130,30 @@ script:
             - delay:
                 milliseconds: "{{ repeat.item.wait_ms }}"
 
-  # One peek (or a walk across one frame) at a random frame, for any effect; the frame
-  # picks who and how. Spacing is the aura_frames_peek automation's job.
+  # One peek (or a walk across one frame), for any effect; the frame picks who and how.
+  # The frames take turns: each round goes through all of them in a random order, and
+  # input_text.aura_peek_round lists who has had theirs. A new round never starts with the
+  # frame that ended the last one. Spacing is the aura_frames_peek automation's job.
   aura_peek:
     alias: "Aura frames: peek"
     mode: single
     variables:
       wall: *wall
+      done: "{{ states('input_text.aura_peek_round').split(',') | select('in', wall) | list }}"
+      waiting: "{{ wall | reject('in', done) | list }}"
+      # Pass to_frame to name the frame (it still counts as that frame's turn).
+      frame: >-
+        {{ to_frame if to_frame is defined and to_frame in wall
+           else (waiting or wall | reject('eq', done | last | default('')) | list) | random }}
     sequence:
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.aura_peek_round
+        data:
+          value: "{{ ((done if waiting else []) + [frame]) | join(',') }}"
       - action: mqtt.publish
         data:
-          topic: "aura/{{ wall | random }}/cmd/ghost"
+          topic: "aura/{{ frame }}/cmd/ghost"
           qos: 1
           retain: false
           payload: '{"peek": true}'
@@ -309,8 +322,8 @@ automation:
         data:
           option: "{{ effect }}"
 
-  # Tours: a visitor crosses part or all of the wall, about once an hour. Never within
-  # 45 min of the last, then a 1-in-15 chance each minute (gaps ~45-90 min).
+  # Tours: a visitor crosses part or all of the wall, about every 30 min. Never within
+  # 20 min of the last, then a 1-in-10 chance each minute (gaps ~20-45 min).
   - id: aura_frames_ghost_tour
     alias: "Aura frames: visitor tour"
     triggers:
@@ -323,18 +336,22 @@ automation:
       - "{{ not is_state('binary_sensor.aura_morning_window', 'on') }}"
       - >-
         {% set last = state_attr('script.aura_ghost_tour', 'last_triggered') %}
-        {{ (last is none or now() - last > timedelta(minutes=45)) and range(15) | random == 0 }}
+        {{ (last is none or now() - last > timedelta(minutes=20)) and range(10) | random == 0 }}
     actions:
       - action: script.aura_ghost_tour
 
-  # Peeks, one at a time at a random frame: about every 15 min across the whole wall, never
-  # within 5 min of the last. The frames have no peek timer of their own, because only HA
-  # sees all of them. No peek while a tour is crossing or for 2 min after it started.
+  # Peeks, one at a time, the frames taking turns: about every 6 min across the whole wall,
+  # never within 5 min of the last. The frames have no peek timer of their own, because only
+  # HA sees all of them. No peek while a tour is crossing or for 2 min after it started.
+  #
+  # Checked at :30, half a minute after the tours' check, so a tour that starts this minute
+  # is seen here. On the same tick the two could start together, and the tour's quiet_ms
+  # would cut the new peek off at once.
   - id: aura_frames_peek
     alias: "Aura frames: peek"
     triggers:
       - trigger: time_pattern
-        minutes: "/1"
+        seconds: "30"
     conditions:
       - *effect_on
       - "{{ not is_state('binary_sensor.aura_morning_window', 'on') }}"
@@ -342,10 +359,11 @@ automation:
         {% set tour = state_attr('script.aura_ghost_tour', 'last_triggered') %}
         {{ is_state('script.aura_ghost_tour', 'off')
            and (tour is none or now() - tour > timedelta(minutes=2)) }}
-      # 5 min after the last one, then 1 in 10 each minute: ~15 min apart on average.
+      # 5 min after the last one (the tick itself lands a few ms either side of 5:00), then
+      # 1 in 2 each minute: ~6 min apart on average.
       - >-
         {% set last = state_attr('script.aura_peek', 'last_triggered') %}
-        {{ (last is none or now() - last >= timedelta(minutes=5)) and range(10) | random == 0 }}
+        {{ (last is none or now() - last > timedelta(minutes=4, seconds=55)) and range(2) | random == 0 }}
     actions:
       - action: script.aura_peek
 
@@ -469,6 +487,9 @@ input_boolean:
 input_text:
   aura_morning_cleared:
     name: Kids cleared this morning
+    max: 255
+  aura_peek_round:
+    name: Frames peeked at this round
     max: 255
 
 template:
